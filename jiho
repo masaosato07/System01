@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>時報システム</title>
+  <style>
+    /* シンプル黒背景・デジタル感 */
+    :root{--accent: #00e6a8; --muted: #7a7a7a}
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Hiragino Kaku Gothic ProN',Meiryo,Helvetica,Arial}
+    body{background:#070707;color:#e9f8f3;display:flex;align-items:center;justify-content:center}
+    .card{width:880px;max-width:95%;background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.04);padding:28px;border-radius:12px;box-shadow:0 6px 30px rgba(0,0,0,0.6)}
+    h1{margin:0 0 8px 0;font-size:20px;color:var(--accent)}
+    .clock{font-weight:700;font-size:48px;letter-spacing:2px;margin:6px 0 18px 0;text-align:center}
+    .sub{color:var(--muted);font-size:13px;margin-bottom:18px;text-align:center}
+
+    .controls{display:flex;gap:14px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .left{display:flex;gap:12px;align-items:center}
+    select,input[type=file]{background:#0f0f0f;color:inherit;border:1px solid rgba(255,255,255,0.06);padding:10px;border-radius:8px}
+    button{background:linear-gradient(90deg,var(--accent),#81ffe0);border:none;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px 12px}
+    .right{display:flex;gap:10px;align-items:center}
+
+    .list{margin-top:18px;border-top:1px dashed rgba(255,255,255,0.03);padding-top:14px;max-height:260px;overflow:auto}
+    .item{display:flex;align-items:center;justify-content:space-between;padding:10px 8px;border-radius:8px;background:linear-gradient(180deg,transparent,rgba(255,255,255,0.01));margin-bottom:8px}
+    .badge{font-weight:700;color:var(--accent);min-width:88px;text-align:left}
+    .meta{color:var(--muted);font-size:13px}
+    .controls-sm{display:flex;gap:8px}
+
+    .note{margin-top:10px;color:var(--muted);font-size:12px}
+
+    @media(max-width:560px){.left{flex-direction:column;align-items:stretch}.right{width:100%;justify-content:flex-end}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>時報システム</h1>
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="sub">設定した時刻になると、アップロードしたMP3が再生されます</div>
+
+    <div class="controls">
+      <div class="left">
+        <label>
+          <select id="hour">
+            <!-- 0~23 -->
+          </select>
+        </label>
+        <label>
+          <select id="minute">
+            <!-- 0~59 -->
+          </select>
+        </label>
+
+        <label>
+          <input id="file" type="file" accept="audio/mpeg" />
+        </label>
+
+        <button id="add">時報をセット</button>
+        <button id="playDemo" class="ghost">試しに鳴らす</button>
+      </div>
+
+      <div class="right">
+        <div class="meta">ブラウザの自動再生制限により、最初の操作（ファイル選択やボタン押下）が必要な場合があります</div>
+      </div>
+    </div>
+
+    <div class="list" id="list">
+      <!-- 設定一覧 -->
+    </div>
+
+    <div class="note">※ 複数の時刻を登録できます。ページを閉じると設定は消えます（ローカル保存は今後追加可能）。</div>
+  </div>
+
+  <script>
+    // UI参照
+    const hourEl = document.getElementById('hour');
+    const minuteEl = document.getElementById('minute');
+    const fileEl = document.getElementById('file');
+    const addBtn = document.getElementById('add');
+    const listEl = document.getElementById('list');
+    const clockEl = document.getElementById('clock');
+    const playDemo = document.getElementById('playDemo');
+
+    // 選択肢を作る
+    for(let h=0;h<24;h++){const opt=document.createElement('option');opt.value=h;opt.textContent=(h<10? '0'+h : h+'')+'時';hourEl.appendChild(opt)}
+    for(let m=0;m<60;m++){const opt=document.createElement('option');opt.value=m;opt.textContent=(m<10? '0'+m : m+'')+'分';minuteEl.appendChild(opt)}
+
+    // 登録された時報の配列
+    // {id, hour, minute, audioUrl, filename, lastFiredMinute}
+    const schedules = [];
+
+    // ブラウザAudio要素を作るヘルパー
+    function makeAudio(url){
+      const a = new Audio(url);
+      a.preload = 'auto';
+      return a;
+    }
+
+    function renderList(){
+      listEl.innerHTML = '';
+      if(schedules.length===0){listEl.innerHTML = '<div class="meta">まだ時刻が登録されていません</div>';return}
+      schedules.forEach(s=>{
+        const div = document.createElement('div');div.className='item';
+        const left = document.createElement('div');
+        left.innerHTML = `<div class="badge">${String(s.hour).padStart(2,'0')}:${String(s.minute).padStart(2,'0')}</div><div class="meta">${s.filename||'（ファイル未選択）'}</div>`;
+        const ctr = document.createElement('div');ctr.className='controls-sm';
+        const test = document.createElement('button');test.textContent='テスト再生';test.onclick = ()=>{ if(s.audio) s.audio.currentTime=0; s.audio && s.audio.play().catch(()=>alert('再生できませんでした。ブラウザの設定を確認してください。')) };
+        const del = document.createElement('button');del.className='ghost';del.textContent='削除';del.onclick = ()=>{ const idx = schedules.findIndex(x=>x.id===s.id); if(idx>-1){ URL.revokeObjectURL(s.audioUrl); schedules.splice(idx,1); renderList(); } };
+        ctr.appendChild(test);ctr.appendChild(del);
+        div.appendChild(left);div.appendChild(ctr);listEl.appendChild(div);
+      })
+    }
+
+    // 追加処理
+    addBtn.addEventListener('click', ()=>{
+      const h = parseInt(hourEl.value,10);
+      const m = parseInt(minuteEl.value,10);
+      const f = fileEl.files[0];
+      if(!Number.isFinite(h) || !Number.isFinite(m)) { alert('時刻を選んでください'); return }
+      if(!f){ alert('再生するMP3ファイルを選択してください'); return }
+      if(!f.type || !f.type.includes('mpeg')){ if(!f.name.toLowerCase().endsWith('.mp3')){ alert('MP3ファイルを選んでください（.mp3）'); return }}
+
+      // 既に同じ時刻で同じファイルが登録されていないかチェック（簡易）
+      const duplicate = schedules.find(s=>s.hour===h && s.minute===m && s.filename===f.name);
+      if(duplicate){ if(!confirm('同じ時刻・同じファイルの登録があります。重複して追加しますか？')) return }
+
+      const blobUrl = URL.createObjectURL(f);
+      const audio = makeAudio(blobUrl);
+
+      const id = Math.random().toString(36).slice(2,9);
+      schedules.push({id, hour:h, minute:m, audioUrl:blobUrl, audio, filename:f.name, lastFiredMinute:null});
+      renderList();
+
+      // 親切にファイル入力をクリアして、同じファイルを再選択できるようにする
+      fileEl.value = '';
+    });
+
+    // 毎秒現在時刻を更新し、スケジュールがあれば再生する
+    function tick(){
+      const now = new Date();
+      const hh = now.getHours();
+      const mm = now.getMinutes();
+      const ss = now.getSeconds();
+      clockEl.textContent = `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}`;
+
+      // チェック：時と分が一致した瞬間（秒が0のタイミング）で再生
+      // ただし、ブラウザが1秒キッチリでない場合もあるので、再生判定は同じ分で最後に鳴らした時刻と異なるかで判定
+      schedules.forEach(s=>{
+        if(s.hour===hh && s.minute===mm){
+          const key = `${hh}:${mm}`;
+          if(s.lastFiredMinute !== key){
+            // 再生開始
+            s.audio.currentTime = 0;
+            s.audio.play().catch(err=>{
+              // 再生失敗（ブラウザ制限など）
+              console.warn('再生失敗', err);
+            });
+            s.lastFiredMinute = key;
+          }
+        }
+      });
+    }
+
+    // start ticking
+    setInterval(tick, 1000);
+    tick();
+
+    // 試しに鳴らすボタン
+    playDemo.addEventListener('click', ()=>{
+      const f = fileEl.files[0];
+      if(!f){ alert('まずはMP3ファイルを選んでから試し再生してください'); return }
+      const demoUrl = URL.createObjectURL(f);
+      const a = makeAudio(demoUrl);
+      a.play().catch(()=>alert('再生できませんでした。ユーザー操作が必要な場合があります。'));
+      // 1分後にURLを解放
+      setTimeout(()=>URL.revokeObjectURL(demoUrl), 60_000);
+    });
+
+    // 初期レンダリング
+    renderList();
+
+    // ページが閉じられる時に作成したObjectURLを解放（メモリ対策）
+    window.addEventListener('beforeunload', ()=>{
+      schedules.forEach(s=>{ try{ URL.revokeObjectURL(s.audioUrl) }catch(e){} });
+    });
+  </script>
+</body>
+</html>
